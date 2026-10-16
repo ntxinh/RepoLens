@@ -3,8 +3,10 @@ module github.com/ntxinh/RepoLens
 go 1.25
 
 require (
+	github.com/bmatcuk/doublestar/v4 v4.10.3
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
+	github.com/pelletier/go-toml/v2 v2.4.3
 )
 
 require (
