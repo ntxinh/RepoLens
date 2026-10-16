@@ -198,3 +198,32 @@ func TestWindowSizeTracked(t *testing.T) {
 		t.Fatalf("got %dx%d", m.width, m.height)
 	}
 }
+
+func TestCursorRestoredAfterRowsArrive(t *testing.T) {
+	// Regression: bubbles/table clamps cursor to -1 when SetRows runs on an
+	// empty list (initial refresh), and never restores it when rows arrive —
+	// leaving Enter/dead until the user moves. rebuild must re-derive it.
+	m := newModel()
+	m.rebuild() // empty: cursor hits -1
+	st := statusAt("/a")
+	m.statuses["/a"] = &st
+	m.rebuild()
+	if m.selectedPath() != "/a" {
+		t.Fatalf("expected cursor on /a, got %q", m.selectedPath())
+	}
+}
+
+func TestSelectionPreservedAcrossRebuild(t *testing.T) {
+	m := newModel()
+	a, b := statusAt("/a"), statusAt("/b")
+	m.statuses["/a"], m.statuses["/b"] = &a, &b
+	m.rebuild()
+	m.table.SetCursor(1) // select /b
+	// New status arrives → rebuild must keep /b selected.
+	b2 := statusAt("/b")
+	m.statuses["/b"] = &b2
+	m.rebuild()
+	if m.selectedPath() != "/b" {
+		t.Fatalf("selection lost: %q", m.selectedPath())
+	}
+}

@@ -6,9 +6,12 @@ import (
 
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/ntxinh/RepoLens/internal/git"
+	"github.com/ntxinh/RepoLens/internal/launcher"
 	"github.com/ntxinh/RepoLens/internal/repository"
 	"github.com/ntxinh/RepoLens/internal/service"
 )
@@ -71,6 +74,26 @@ type StatusMsg struct{ Status repository.Status }
 // ScanFinished reports registry scan completion.
 type ScanFinished struct{ Count int }
 
+// DetailMsg carries the data for the detail view.
+type DetailMsg struct {
+	Path    string
+	Status  repository.Status
+	Commits []git.Commit
+	Diff    *git.DiffResult
+	Err     error
+}
+
+// LaunchResult reports a launch attempt outcome.
+type LaunchResult struct{ Err error }
+
+// viewID identifies the current screen.
+type viewID int
+
+const (
+	viewList viewID = iota
+	viewDetail
+)
+
 // Model is the root Bubble Tea model for the dashboard.
 type Model struct {
 	version string
@@ -87,6 +110,11 @@ type Model struct {
 	searching bool
 	showHelp  bool
 	loading   bool
+	notice    string // transient footer message (launch errors etc.)
+
+	view     viewID
+	detail   DetailMsg
+	viewport viewport.Model
 
 	width  int
 	height int
@@ -175,4 +203,65 @@ func (m Model) scanCmd() tea.Cmd {
 		}
 		return ScanFinished{Count: n}
 	}
+}
+
+// detailCmd loads commits + diff for the selected repository.
+func (m Model) detailCmd(path string) tea.Cmd {
+	return func() tea.Msg {
+		d := DetailMsg{Path: path}
+		if st, ok := m.statuses[path]; ok {
+			d.Status = *st
+		} else {
+			d.Status = repository.Status{Path: path}
+		}
+		commits, err := m.svc.Runner.RecentCommits(context.Background(), path, 10)
+		if err != nil {
+			d.Err = err
+			return d
+		}
+		d.Commits = commits
+		diff, err := m.svc.Runner.Diff(context.Background(), path)
+		if err != nil {
+			d.Err = err
+			return d
+		}
+		d.Diff = diff
+		return d
+	}
+}
+
+// selectedPath returns the repo path under the cursor, "" if none.
+func (m Model) selectedPath() string {
+	row := m.table.Cursor()
+	if row < 0 || row >= len(m.order) {
+		return ""
+	}
+	return m.order[row]
+}
+
+// launchDetached spawns a detached tool (editor, terminal, file manager).
+func (m Model) launchDetached(cmd []string) tea.Cmd {
+	path := m.selectedPath()
+	if path == "" || len(cmd) == 0 {
+		return nil
+	}
+	return func() tea.Msg {
+		return LaunchResult{Err: launcher.Launch(cmd, path)}
+	}
+}
+
+// launchInteractive builds a tea.ExecProcess for TUI tools (Git TUI,
+// worktree manager) so they inherit the terminal, then resume.
+func (m Model) launchInteractive(cmd []string) tea.Cmd {
+	path := m.selectedPath()
+	if path == "" || len(cmd) == 0 {
+		return nil
+	}
+	c, err := launcher.Command(cmd, path)
+	if err != nil {
+		return func() tea.Msg { return LaunchResult{Err: err} }
+	}
+	return tea.ExecProcess(c, func(err error) tea.Msg {
+		return LaunchResult{Err: err}
+	})
 }
