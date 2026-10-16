@@ -52,6 +52,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case TickMsg:
+		// Auto-refresh only when idle; a running refresh owns the queue.
+		if !m.loading && m.view == viewList && !m.searching {
+			m.loading = true
+			return m, tea.Batch(m.refreshAllCmd(), m.tickCmd())
+		}
+		return m, m.tickCmd()
+
 	case error:
 		m.loading = false
 		m.notice = msg.Error()
@@ -96,6 +104,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.view = viewList
 				return m, nil
 			case "ctrl+c":
+				m.persistUIState()
 				return m, tea.Quit
 			case "o", "t", "f", "g", "w", "c":
 				return m, m.dispatchKey(msg.String())
@@ -107,6 +116,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		switch msg.String() {
 		case "q", "ctrl+c":
+			m.persistUIState()
 			return m, tea.Quit
 		case "?":
 			m.showHelp = !m.showHelp
@@ -294,6 +304,11 @@ func (m *Model) sortPaths(paths []string) {
 	sort.Slice(paths, func(i, j int) bool {
 		a, b := m.statuses[paths[i]], m.statuses[paths[j]]
 		switch m.sort {
+		case sortDirty:
+			if a.Changes.Dirty() != b.Changes.Dirty() {
+				return a.Changes.Dirty()
+			}
+			return repoName(a) < repoName(b)
 		case sortName:
 			return repoName(a) < repoName(b)
 		case sortBranch:

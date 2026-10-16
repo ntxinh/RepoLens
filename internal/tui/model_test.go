@@ -162,8 +162,8 @@ func TestSortCycle(t *testing.T) {
 	m := newModel()
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
 	m = updated.(Model)
-	if m.sort != sortName {
-		t.Fatalf("expected sortName after one cycle, got %v", m.sort)
+	if m.sort != sortDirty {
+		t.Fatalf("expected sortDirty after one cycle, got %v", m.sort)
 	}
 }
 

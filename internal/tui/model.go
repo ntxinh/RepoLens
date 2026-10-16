@@ -3,6 +3,7 @@ package tui
 
 import (
 	"context"
+	"time"
 
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/ntxinh/RepoLens/internal/git"
 	"github.com/ntxinh/RepoLens/internal/launcher"
+	"github.com/ntxinh/RepoLens/internal/registry"
 	"github.com/ntxinh/RepoLens/internal/repository"
 	"github.com/ntxinh/RepoLens/internal/service"
 )
@@ -31,6 +33,7 @@ type sortMode int
 
 const (
 	sortAttention sortMode = iota
+	sortDirty
 	sortName
 	sortBranch
 	sortAheadBehind
@@ -38,8 +41,11 @@ const (
 	sortPath
 )
 
+// sortNames are display labels; sortIDs are config/registry values
+// (matching internal/config's validSorts).
 var sortNames = map[sortMode]string{
 	sortAttention:   "attention",
+	sortDirty:       "dirty",
 	sortName:        "name",
 	sortBranch:      "branch",
 	sortAheadBehind: "ahead/behind",
@@ -47,7 +53,17 @@ var sortNames = map[sortMode]string{
 	sortPath:        "path",
 }
 
-var sortOrder = []sortMode{sortAttention, sortName, sortBranch, sortAheadBehind, sortLastCommit, sortPath}
+var sortIDs = map[sortMode]string{
+	sortAttention:   "attention",
+	sortDirty:       "dirty",
+	sortName:        "name",
+	sortBranch:      "branch",
+	sortAheadBehind: "ahead_behind",
+	sortLastCommit:  "last_commit",
+	sortPath:        "path",
+}
+
+var sortOrder = []sortMode{sortAttention, sortDirty, sortName, sortBranch, sortAheadBehind, sortLastCommit, sortPath}
 
 type filterMode int
 
@@ -132,7 +148,7 @@ func New(version string, svc *service.Service) Model {
 	ti.Prompt = "/"
 	ti.CharLimit = 128
 
-	return Model{
+	m := Model{
 		version:  version,
 		svc:      svc,
 		table:    t,
@@ -141,6 +157,39 @@ func New(version string, svc *service.Service) Model {
 		sort:     sortAttention,
 		filter:   filterAll,
 	}
+	m.applyUIState()
+	return m
+}
+
+// applyUIState restores persisted sort/filter from the registry.
+func (m *Model) applyUIState() {
+	if m.svc == nil {
+		return
+	}
+	ui := m.svc.Reg.UI()
+	for mode, id := range sortIDs {
+		if ui.Sort == id {
+			m.sort = mode
+		}
+	}
+	switch ui.Filter {
+	case "attention":
+		m.filter = filterAttention
+	case "dirty":
+		m.filter = filterDirty
+	}
+}
+
+// persistUIState saves sort/filter into the registry (called on quit).
+func (m *Model) persistUIState() {
+	if m.svc == nil {
+		return
+	}
+	m.svc.Reg.SetUI(registry.UIState{
+		Sort:   sortIDs[m.sort],
+		Filter: filterNames[m.filter],
+	})
+	_ = m.svc.Reg.Save() // best-effort: never block quit on a write error
 }
 
 func tableStyles() table.Styles {
@@ -155,7 +204,19 @@ func (m Model) Init() tea.Cmd {
 		return nil
 	}
 	m.loading = true
-	return m.refreshAllCmd()
+	return tea.Batch(m.refreshAllCmd(), m.tickCmd())
+}
+
+// TickMsg triggers a periodic auto-refresh.
+type TickMsg time.Time
+
+// tickCmd schedules the next auto-refresh tick (nil when disabled).
+func (m Model) tickCmd() tea.Cmd {
+	d := m.refreshInterval()
+	if d == 0 {
+		return nil
+	}
+	return tea.Tick(d, func(t time.Time) tea.Msg { return TickMsg(t) })
 }
 
 // refreshAllCmd refreshes every registered repo; statuses stream back
@@ -264,4 +325,12 @@ func (m Model) launchInteractive(cmd []string) tea.Cmd {
 	return tea.ExecProcess(c, func(err error) tea.Msg {
 		return LaunchResult{Err: err}
 	})
+}
+
+// refreshInterval returns the configured auto-refresh period (0 = off).
+func (m Model) refreshInterval() time.Duration {
+	if m.svc == nil || m.svc.Cfg.General.RefreshIntervalSeconds <= 0 {
+		return 0
+	}
+	return time.Duration(m.svc.Cfg.General.RefreshIntervalSeconds) * time.Second
 }
