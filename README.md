@@ -75,6 +75,18 @@ Configuration lives at `${XDG_CONFIG_HOME:-~/.config}/repolens/config.toml`. See
 
 See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). `make help` lists the common targets.
 
+## Fish integration
+
+Optional — install manually, RepoLens never touches your fish config:
+
+```sh
+cp fish/repolens.fish ~/.config/fish/functions/       # provides croot
+cp completions/repolens.fish ~/.config/fish/completions/
+```
+
+`croot <query>` `cd`s into the unique registered repository matching the
+query (basename or substring). `croot` alone lists candidates.
+
 ## License
 
 [MIT](LICENSE)
