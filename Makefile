@@ -28,6 +28,14 @@ fmt-check: ## Fail if any file is not gofmt-clean
 lint: vet ## Vet + govulncheck if installed
 	@command -v govulncheck >/dev/null 2>&1 && govulncheck ./... || echo "govulncheck not installed; skipping"
 
+
+.PHONY: release
+release: ## Cross-build linux amd64+arm64 artifacts + checksums
+	mkdir -p $(BIN_DIR)
+	GOOS=linux GOARCH=amd64 go build -ldflags '$(LDFLAGS)' -o $(BIN_DIR)/$(BINARY)-linux-amd64 $(CMD)
+	GOOS=linux GOARCH=arm64 go build -ldflags '$(LDFLAGS)' -o $(BIN_DIR)/$(BINARY)-linux-arm64 $(CMD)
+	cd $(BIN_DIR) && sha256sum $(BINARY)-linux-* > sha256sums.txt
+	@ls -la $(BIN_DIR)
 install: ## go install with version stamp
 	go install -ldflags '$(LDFLAGS)' $(CMD)
 

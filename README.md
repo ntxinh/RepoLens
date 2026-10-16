@@ -24,17 +24,35 @@ Full spec: [docs/repolens-spec.md](docs/repolens-spec.md). Architecture: [DESIGN
 
 ## Install
 
+### Release binary
+
+Download `repolens-linux-amd64` (or `-arm64`) and `sha256sums.txt` from the
+[latest release](https://github.com/ntxinh/RepoLens/releases):
+
 ```sh
-go install github.com/ntxinh/RepoLens/cmd/repolens@latest
+sha256sum -c sha256sums.txt --ignore-missing
+install -m 0755 repolens-linux-amd64 ~/.local/bin/repolens
 ```
 
-Or from source:
+### From source
 
 ```sh
 git clone https://github.com/ntxinh/RepoLens.git
 cd RepoLens
 mise install          # installs the pinned Go toolchain
 make install          # installs to GOPATH/bin
+```
+
+Or directly: `go install github.com/ntxinh/RepoLens/cmd/repolens@latest`
+
+### Uninstall
+
+```sh
+rm ~/.local/bin/repolens                    # the binary
+rm -rf ~/.config/repolens                   # configuration
+rm -rf ~/.local/share/repolens              # registry
+rm -rf ~/.cache/repolens ~/.local/state/repolens
+# plus the fish files you copied manually (see Fish integration)
 ```
 
 ## Quick start
