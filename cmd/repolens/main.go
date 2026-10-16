@@ -61,7 +61,12 @@ func ctx() (context.Context, context.CancelFunc) {
 }
 
 func runTUI() {
-	p := tea.NewProgram(tui.New(version))
+	svc, err := loadService("")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "repolens:", err)
+		os.Exit(1)
+	}
+	p := tea.NewProgram(tui.New(version, svc))
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "repolens:", err)
 		os.Exit(1)

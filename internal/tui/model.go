@@ -2,95 +2,177 @@
 package tui
 
 import (
-	"fmt"
-	"strings"
+	"context"
 
+	"github.com/charmbracelet/bubbles/table"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/ntxinh/RepoLens/internal/repository"
+	"github.com/ntxinh/RepoLens/internal/service"
 )
 
 var (
-	titleStyle = lipgloss.NewStyle().Bold(true)
-	mutedStyle = lipgloss.NewStyle().Faint(true)
-	keyStyle   = lipgloss.NewStyle().Bold(true)
+	titleStyle  = lipgloss.NewStyle().Bold(true)
+	mutedStyle  = lipgloss.NewStyle().Faint(true)
+	keyStyle    = lipgloss.NewStyle().Bold(true)
+	errorStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	warnStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
+	okStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+	headerStyle = lipgloss.NewStyle().Faint(true)
 )
+
+// sortMode cycles with the 's' key.
+type sortMode int
+
+const (
+	sortAttention sortMode = iota
+	sortName
+	sortBranch
+	sortAheadBehind
+	sortLastCommit
+	sortPath
+)
+
+var sortNames = map[sortMode]string{
+	sortAttention:   "attention",
+	sortName:        "name",
+	sortBranch:      "branch",
+	sortAheadBehind: "ahead/behind",
+	sortLastCommit:  "last commit",
+	sortPath:        "path",
+}
+
+var sortOrder = []sortMode{sortAttention, sortName, sortBranch, sortAheadBehind, sortLastCommit, sortPath}
+
+type filterMode int
+
+const (
+	filterAll filterMode = iota
+	filterAttention
+	filterDirty
+)
+
+var filterNames = map[filterMode]string{
+	filterAll:       "all",
+	filterAttention: "attention",
+	filterDirty:     "dirty",
+}
+
+// Messages flowing from the service layer into the model.
+
+// StatusesLoaded carries a fresh batch of per-repo statuses.
+type StatusesLoaded []repository.Status
+
+// StatusMsg delivers one repository's refreshed status.
+type StatusMsg struct{ Status repository.Status }
+
+// ScanFinished reports registry scan completion.
+type ScanFinished struct{ Count int }
 
 // Model is the root Bubble Tea model for the dashboard.
 type Model struct {
-	version  string
-	showHelp bool
-	width    int
-	height   int
+	version string
+	svc     *service.Service
+
+	table  table.Model
+	search textinput.Model
+
+	statuses map[string]*repository.Status // keyed by path
+	order    []string                      // paths, current display order
+
+	sort      sortMode
+	filter    filterMode
+	searching bool
+	showHelp  bool
+	loading   bool
+
+	width  int
+	height int
 }
 
-// New returns a dashboard model for the given build version.
-func New(version string) Model {
-	return Model{version: version}
+// New returns a dashboard model. svc may be nil (shows empty state).
+func New(version string, svc *service.Service) Model {
+	t := table.New(
+		table.WithFocused(true),
+		table.WithHeight(10),
+	)
+	t.SetStyles(tableStyles())
+
+	ti := textinput.New()
+	ti.Prompt = "/"
+	ti.CharLimit = 128
+
+	return Model{
+		version:  version,
+		svc:      svc,
+		table:    t,
+		search:   ti,
+		statuses: map[string]*repository.Status{},
+		sort:     sortAttention,
+		filter:   filterAll,
+	}
+}
+
+func tableStyles() table.Styles {
+	s := table.DefaultStyles()
+	s.Selected = s.Selected.Bold(true).Foreground(lipgloss.Color("12"))
+	return s
 }
 
 // Init implements tea.Model.
-func (m Model) Init() tea.Cmd { return nil }
+func (m Model) Init() tea.Cmd {
+	if m.svc == nil {
+		return nil
+	}
+	m.loading = true
+	return m.refreshAllCmd()
+}
 
-// Update implements tea.Model.
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "q", "ctrl+c":
-			return m, tea.Quit
-		case "?":
-			m.showHelp = !m.showHelp
-		case "esc":
-			m.showHelp = false
+// refreshAllCmd refreshes every registered repo; statuses stream back
+// individually via statusCmd.
+func (m Model) refreshAllCmd() tea.Cmd {
+	if m.svc == nil {
+		return nil
+	}
+	entries := m.svc.Reg.Entries()
+	if len(entries) == 0 {
+		// Still mark refresh finished so the UI knows there's nothing pending.
+		return func() tea.Msg { return StatusesLoaded(nil) }
+	}
+	cmds := make([]tea.Cmd, len(entries))
+	for i, e := range entries {
+		path := e.Path
+		cmds[i] = func() tea.Msg {
+			return StatusMsg{Status: m.svc.Refresh(context.Background(), path)}
 		}
-	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
 	}
-	return m, nil
+	return tea.Batch(cmds...)
 }
 
-// View implements tea.Model.
-func (m Model) View() string {
-	var b strings.Builder
-
-	b.WriteString(titleStyle.Render("RepoLens"))
-	b.WriteString(mutedStyle.Render("  " + m.version + "  ·  0 repositories  ·  0 need attention"))
-	b.WriteString("\n\n")
-
-	if m.showHelp {
-		b.WriteString(helpView())
-	} else {
-		b.WriteString("  No repositories registered yet.\n\n")
-		b.WriteString("  RepoLens discovers Git working trees beneath configured root\n")
-		b.WriteString("  directories. Registration and scanning arrive in Phase 2.\n")
-		b.WriteString("  See " + keyStyle.Render("docs/repolens-spec.md") + " for the roadmap.\n")
+// refreshSelectedCmd refreshes only the repo under the cursor.
+func (m Model) refreshSelectedCmd() tea.Cmd {
+	if m.svc == nil || len(m.order) == 0 {
+		return nil
 	}
-
-	b.WriteString("\n" + mutedStyle.Render("  ? help · q quit"))
-	return b.String()
+	row := m.table.Cursor()
+	if row < 0 || row >= len(m.order) {
+		return nil
+	}
+	path := m.order[row]
+	return func() tea.Msg {
+		return StatusMsg{Status: m.svc.Refresh(context.Background(), path)}
+	}
 }
 
-func helpView() string {
-	rows := [][2]string{
-		{"j / k", "move selection (when a list exists)"},
-		{"enter", "repository details"},
-		{"/", "search / filter"},
-		{"a", "repositories needing attention"},
-		{"d", "toggle dirty-only filter"},
-		{"r", "refresh"},
-		{"s", "cycle sort mode"},
-		{"o", "open in configured editor"},
-		{"t", "open terminal at path"},
-		{"g", "open configured Git TUI"},
-		{"c", "copy repository path"},
-		{"?", "toggle this help"},
-		{"esc", "close panel"},
-		{"q", "quit"},
+// scanCmd runs discovery + registration.
+func (m Model) scanCmd() tea.Cmd {
+	return func() tea.Msg {
+		n, err := m.svc.ScanRoots(context.Background(), nil)
+		if err != nil {
+			return err
+		}
+		return ScanFinished{Count: n}
 	}
-	var b strings.Builder
-	for _, r := range rows {
-		fmt.Fprintf(&b, "  %s  %s\n", keyStyle.Render(fmt.Sprintf("%-8s", r[0])), r[1])
-	}
-	return b.String()
 }
